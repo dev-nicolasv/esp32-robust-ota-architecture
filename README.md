@@ -1,133 +1,195 @@
-# ESP32 Robust OTA Architecture for Industrial PID Control
+<p align="center">
+  <img src="docs/assets/robust-ota-logo.svg" alt="ESP32 Robust OTA Architecture" width="280" />
+</p>
 
-Production-oriented ESP32 firmware built with PlatformIO for industrial heater control, combining:
+<h1 align="center">ESP32 Robust OTA Architecture</h1>
 
-- Deterministic real-time PID loop in a dedicated FreeRTOS task
-- Background secure OTA over HTTPS in a separate FreeRTOS task
-- Dual-partition OTA with rollback protection
-- Multi-source OTA strategy: Local Portal, AWS, and ThingsBoard
+<p align="center">
+  Industrial firmware blueprint for <b>ESP32 heater control</b> with deterministic PID and secure OTA.
+  <br/>
+  FreeRTOS task isolation, HTTPS multi-source update pipeline, SHA-256 verification, rollback-safe boot.
+</p>
 
-## 1. Key capabilities
+<p align="center">
+  <img src="https://img.shields.io/github/actions/workflow/status/dev-nicolasv/esp32-robust-ota-architecture/firmware-ci.yml?branch=main&style=for-the-badge&label=Build" alt="Build status"/>
+  <img src="https://img.shields.io/badge/Framework-Arduino-00979D?style=for-the-badge&logo=arduino&logoColor=white" alt="Arduino"/>
+  <img src="https://img.shields.io/badge/Build-PlatformIO-F5822A?style=for-the-badge&logo=platformio&logoColor=white" alt="PlatformIO"/>
+  <img src="https://img.shields.io/badge/Target-ESP32-E7352C?style=for-the-badge" alt="ESP32"/>
+  <img src="https://img.shields.io/badge/Control-PID%20Real%20Time-0B5FFF?style=for-the-badge" alt="PID"/>
+  <img src="https://img.shields.io/badge/OTA-HTTPS%20%2B%20Rollback-2C3E50?style=for-the-badge" alt="OTA"/>
+</p>
 
-- Deterministic control loop (`vTaskDelayUntil`) with no network dependency
-- OOP PID implementation with anti-windup and bounded output
-- PWM heater actuation and 0-10V sensor acquisition via ADC scaling
-- SHA-256 firmware integrity verification before activation
-- HTTPS-only OTA transport with certificate validation
-- Staged updates in inactive partition + rollback-safe boot confirmation
-- Per-task watchdog integration (`esp_task_wdt`)
-- Fallback OTA source order: Local Portal -> AWS -> ThingsBoard
+<p align="center">
+  Published by <b>@dev-nicolasv</b>
+</p>
 
-## 2. System architecture
+---
+
+## Overview
+
+This repository provides a production-ready firmware foundation for industrial thermal control systems where deterministic control and safe remote lifecycle management are both mandatory.
+
+System behavior is split into two strict execution domains:
+
+1. High-priority real-time PID task for heater actuation
+2. Independent OTA task for secure update checks and staged firmware download
+
+The control loop never depends on network operations.
+
+## Why this architecture
+
+In industrial environments, a control function must keep timing guarantees even when network links degrade.
+
+This design enforces:
+
+- Core/task isolation between process control and OTA
+- Deterministic loop pacing using `vTaskDelayUntil`
+- OTA activation only after complete image integrity verification
+- Rollback-safe boot validation through ESP32 dual-partition strategy
+
+## Key Features
+
+- OOP PID controller with anti-windup and bounded output
+- 0-10V sensor acquisition path with ADC scaling and process normalization
+- PWM heater output with fixed frequency and bounded duty command
+- HTTPS-only OTA (Local Portal, AWS, ThingsBoard)
+- SHA-256 streamed digest verification before boot partition switch
+- Automatic rollback pathway for invalid post-update startup
+- Task Watchdog (`esp_task_wdt`) integration for control and OTA tasks
+- Source fallback order: Local Portal -> AWS -> ThingsBoard
+
+## System Architecture
 
 ```mermaid
 flowchart LR
   A["0-10V Sensor"] --> B["ADC + Scaling"]
-  B --> C["PID FreeRTOS Task (Core 1)"]
-  C --> D["PWM Heater Output"]
+  B --> C["Control Task (PID, Core 1)"]
+  C --> D["PWM Heater"]
 
-  E["Local Portal HTTPS"] --> F["OTA FreeRTOS Task (Core 0)"]
-  G["AWS HTTPS Endpoint"] --> F
+  E["Local Portal HTTPS"] --> F["OTA Task (Core 0)"]
+  G["AWS HTTPS"] --> F
   H["ThingsBoard HTTPS"] --> F
 
-  F --> I["Inactive OTA Partition"]
-  I --> J["SHA-256 Verification"]
+  F --> I["Inactive OTA Slot"]
+  I --> J["SHA-256 Validation"]
   J --> K["Set Boot Partition"]
-  K --> L["Reboot + Rollback Protection"]
+  K --> L["Reboot + Pending Verify"]
+  L --> M["Mark Valid or Rollback"]
 ```
 
-Detailed design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+Extended design notes: [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)
 
-## 3. Repository layout
+## Hardware Profile
 
-- `src/`: firmware source code
-- `include/`: configuration and interfaces
-- `partitions.csv`: dual-OTA partition layout
-- `tools/`: release and local portal tooling
-- `docs/`: architecture and deployment runbooks
+### Sensor input path (0-10V)
 
-## 4. Quick start
+- Physical sensor range: `0..10V`
+- ESP32 ADC input: scaled to `0..3.3V`
+- ADC pin default: `GPIO34`
 
-### Prerequisites
+### Heater output path
 
-- PlatformIO Core
-- ESP32 development board (4MB flash minimum)
-- TLS-capable OTA backend (local portal, AWS, or ThingsBoard)
+- PWM output pin default: `GPIO25`
+- PWM channel: `0`
+- PWM frequency: `2 kHz`
+- PWM resolution: `10 bits`
 
-### Build
+All defaults are centralized in [include/AppConfig.h](./include/AppConfig.h).
+
+## Repository Layout
+
+- `src/main.cpp`: boot sequence, watchdog init, task startup
+- `src/ControlTask.cpp`: deterministic PID control loop
+- `src/OtaTask.cpp`: OTA background scheduling task
+- `src/OtaManager.cpp`: metadata fetch, download, hash validation, partition switch
+- `src/PIDController.cpp`: object-oriented PID implementation
+- `include/AppConfig.h`: compile-time runtime configuration
+- `partitions.csv`: factory + OTA A/B + otadata layout
+- `tools/generate_ota_manifest.py`: OTA metadata generator
+- `tools/local_ota_portal.py`: local HTTPS OTA server for plant/staging networks
+
+## Quick Start
+
+### 1. Configure network and OTA endpoints
+
+Edit `platformio.ini` build flags:
+
+- `WIFI_SSID`
+- `WIFI_PASSWORD`
+- `OTA_LOCAL_METADATA_URL`
+- `OTA_AWS_METADATA_URL`
+- `OTA_THINGSBOARD_METADATA_URL`
+
+Optional auth headers per source are also supported.
+
+### 2. Configure root certificates
+
+1. Copy `include/PrivateCertificates.h.example` to `include/PrivateCertificates.h`
+2. Add root CA PEM blocks for your endpoints
+3. Keep `include/PrivateCertificates.h` private (already gitignored)
+
+### 3. Build and flash
 
 ```bash
 pio run
-```
-
-### Flash
-
-```bash
 pio run -t upload
-```
-
-### Monitor
-
-```bash
 pio device monitor
 ```
 
-## 5. Firmware configuration
+## OTA Metadata Contracts
 
-Default configuration is in:
-
-- `platformio.ini` (build flags and OTA endpoints)
-- `include/AppConfig.h` (control, task, and OTA parameters)
-
-For private root CAs (for example local enterprise PKI):
-
-1. Copy `include/PrivateCertificates.h.example` to `include/PrivateCertificates.h`
-2. Paste the root CA PEM values
-3. Keep `include/PrivateCertificates.h` out of version control
-
-## 6. OTA metadata contract
-
-### Generic schema (Local Portal and AWS)
+### Generic schema (Local Portal / AWS)
 
 ```json
 {
   "version": "1.0.1",
   "url": "https://ota.example.com/esp32/firmware-1.0.1.bin",
-  "sha256": "c0ffee...64hex...",
+  "sha256": "64_hex_chars_checksum",
   "size": 340977
 }
 ```
 
-### ThingsBoard shared attributes schema
+### ThingsBoard shared attributes
 
 ```json
 {
   "fw_version": "1.0.1",
   "fw_url": "https://ota.example.com/esp32/firmware-1.0.1.bin",
-  "fw_checksum": "c0ffee...64hex...",
+  "fw_checksum": "64_hex_chars_checksum",
   "fw_size": 340977
 }
 ```
 
-## 7. Deployment guides
+## Deployment Guides
 
-- Local portal: [docs/DEPLOYMENT_LOCAL_PORTAL.md](docs/DEPLOYMENT_LOCAL_PORTAL.md)
-- AWS: [docs/DEPLOYMENT_AWS.md](docs/DEPLOYMENT_AWS.md)
-- ThingsBoard: [docs/DEPLOYMENT_THINGSBOARD.md](docs/DEPLOYMENT_THINGSBOARD.md)
+- Local Portal: [docs/DEPLOYMENT_LOCAL_PORTAL.md](./docs/DEPLOYMENT_LOCAL_PORTAL.md)
+- AWS: [docs/DEPLOYMENT_AWS.md](./docs/DEPLOYMENT_AWS.md)
+- ThingsBoard: [docs/DEPLOYMENT_THINGSBOARD.md](./docs/DEPLOYMENT_THINGSBOARD.md)
 
-## 8. Operations and release
+## Release Workflow
 
-- Runbook: [docs/OPERATIONS_RUNBOOK.md](docs/OPERATIONS_RUNBOOK.md)
-- Validation checklist: [docs/VALIDATION_PLAN.md](docs/VALIDATION_PLAN.md)
-- OTA manifest generator: `tools/generate_ota_manifest.py`
+Generate metadata from a built artifact:
 
-## 9. Security notes
+```bash
+python3 tools/generate_ota_manifest.py \
+  --firmware .pio/build/esp32dev/firmware.bin \
+  --version 1.0.1 \
+  --url https://your-host/firmware-1.0.1.bin \
+  --output release/metadata.json
+```
 
-- OTA is HTTPS-only (`https://` enforced)
-- Firmware activation is blocked if SHA-256 does not match
-- New image is marked valid only after startup self-check
-- Rollback is automatic when post-boot validation fails
+Operational guidance:
 
-## 10. Status
+- [docs/OPERATIONS_RUNBOOK.md](./docs/OPERATIONS_RUNBOOK.md)
+- [docs/VALIDATION_PLAN.md](./docs/VALIDATION_PLAN.md)
 
-- `pio run` compilation validated successfully on this repository state.
+## Security Notes
+
+- OTA URLs must be `https://`
+- Firmware is activated only after SHA-256 match
+- New image requires post-boot validation mark as `valid`
+- Failed startup health check triggers rollback path
+
+## License
+
+Pending project license definition.
