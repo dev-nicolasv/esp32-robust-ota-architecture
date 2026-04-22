@@ -1,0 +1,13 @@
+#pragma once
+
+// Copy this file to include/PrivateCertificates.h and paste your private root CAs.
+// Do NOT commit include/PrivateCertificates.h to version control.
+
+inline constexpr const char *kLocalPortalRootCaPem = R"PEM(
+-----BEGIN CERTIFICATE-----
+REPLACE_WITH_LOCAL_PORTAL_ROOT_CA
+-----END CERTIFICATE-----
+)PEM";
+
+inline constexpr const char *kAwsRootCaPem = nullptr;
+inline constexpr const char *kThingsBoardRootCaPem = nullptr;
